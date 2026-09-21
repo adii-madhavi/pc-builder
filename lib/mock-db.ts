@@ -1,31 +1,53 @@
-// Local persistent storage for the bundled Next.js API (Node 22.13+).
-import { DatabaseSync } from 'node:sqlite';
+import { createClient, type Client, type InValue } from '@libsql/client';
 import { mkdirSync } from 'node:fs';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { randomUUID, randomBytes } from 'node:crypto';
 import { catalog } from './catalog';
 
-const directory = process.env.PC_BUILDER_DATA_DIR || path.join(process.cwd(), '.data');
-mkdirSync(directory, { recursive: true });
-const db = new DatabaseSync(path.join(directory, 'pc-builder.sqlite'));
-db.exec('PRAGMA busy_timeout = 5000; PRAGMA journal_mode = WAL; CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, email TEXT UNIQUE NOT NULL, data TEXT NOT NULL); CREATE TABLE IF NOT EXISTS builds (id TEXT PRIMARY KEY, data TEXT NOT NULL); CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);');
-db.prepare('INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)').run('jwt-secret', randomBytes(48).toString('hex'));
-export const localJWTSecret = (db.prepare('SELECT value FROM settings WHERE key = ?').get('jwt-secret') as { value: string }).value;
+let database: Promise<Client> | undefined;
+function getDatabase() {
+  if (!database) database = (async () => {
+    let url = process.env.TURSO_DATABASE_URL;
+    if (!url) {
+      if (process.env.VERCEL) throw new Error('Connect a Turso database before deploying.');
+      const directory = process.env.PC_BUILDER_DATA_DIR || path.join(process.cwd(), '.data');
+      mkdirSync(directory, { recursive: true });
+      url = pathToFileURL(path.join(directory, 'pc-builder.sqlite')).href;
+    }
+    const db = createClient({ url, authToken: process.env.TURSO_AUTH_TOKEN });
+    await db.batch([
+      'CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, email TEXT UNIQUE NOT NULL, data TEXT NOT NULL)',
+      'CREATE TABLE IF NOT EXISTS builds (id TEXT PRIMARY KEY, data TEXT NOT NULL)',
+      'CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)',
+      { sql: 'INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)', args: ['jwt-secret', randomBytes(48).toString('hex')] },
+    ], 'write');
+    return db;
+  })().catch(error => { database = undefined; throw error; });
+  return database;
+}
+const query = async (sql: string, args: InValue[] = []) => (await getDatabase()).execute({ sql, args });
 const parse = (row: unknown): any => row ? JSON.parse((row as { data: string }).data) : undefined;
 
+export async function getJWTSecret() {
+  if (process.env.JWT_SECRET) return process.env.JWT_SECRET;
+  const result = await query('SELECT value FROM settings WHERE key = ?', ['jwt-secret']);
+  return String(result.rows[0].value);
+}
+
 export const mockDB = {
-  createUser(username: string, email: string, passwordHash: string) {
+  async createUser(username: string, email: string, passwordHash: string) {
     const user = { _id: randomUUID(), username, email: email.trim().toLowerCase(), passwordHash, createdAt: new Date(), profile: {} };
-    db.prepare('INSERT INTO users (id, email, data) VALUES (?, ?, ?)').run(user._id, user.email, JSON.stringify(user));
+    await query('INSERT INTO users (id, email, data) VALUES (?, ?, ?)', [user._id, user.email, JSON.stringify(user)]);
     return user;
   },
-  getUserByEmail(email: string) { return parse(db.prepare('SELECT data FROM users WHERE email = ?').get(email.trim().toLowerCase())); },
-  getUserById(id: string) { return parse(db.prepare('SELECT data FROM users WHERE id = ?').get(id)); },
-  updateUser(id: string, data: any) {
-    const user = this.getUserById(id);
+  async getUserByEmail(email: string) { return parse((await query('SELECT data FROM users WHERE email = ?', [email.trim().toLowerCase()])).rows[0]); },
+  async getUserById(id: string) { return parse((await query('SELECT data FROM users WHERE id = ?', [id])).rows[0]); },
+  async updateUser(id: string, data: any) {
+    const user = await this.getUserById(id);
     if (!user) return;
     Object.assign(user, data);
-    db.prepare('UPDATE users SET data = ? WHERE id = ?').run(JSON.stringify(user), id);
+    await query('UPDATE users SET data = ? WHERE id = ?', [JSON.stringify(user), id]);
     return user;
   },
   getComponents(query: any = {}) {
@@ -33,22 +55,24 @@ export const mockDB = {
   },
   getComponentsByType(type: string, limit = 50) { return (catalog[type.toLowerCase()] || []).slice(0, limit); },
   getComponent(id: string) { return Object.values(catalog).flat().find(c => c._id === id); },
-  createBuild(userId: string, data: any) {
+  async createBuild(userId: string, data: any) {
     const build = { ...data, _id: randomUUID(), userId, likes: 0, views: 0, createdAt: new Date() };
-    db.prepare('INSERT INTO builds (id, data) VALUES (?, ?)').run(build._id, JSON.stringify(build));
+    await query('INSERT INTO builds (id, data) VALUES (?, ?)', [build._id, JSON.stringify(build)]);
     return build;
   },
-  getBuild(id: string) { return parse(db.prepare('SELECT data FROM builds WHERE id = ?').get(id)); },
-  // ponytail: JSON records suit a local simulator; use indexed columns for a large hosted catalog.
-  getUserBuilds(userId: string) { return db.prepare('SELECT data FROM builds').all().map(parse).filter(b => b.userId === userId); },
-  getPublicBuilds() { return db.prepare('SELECT data FROM builds').all().map(parse).filter(b => b.isPublic).sort((a,b) => b.likes - a.likes).slice(0,50); },
-  updateBuild(id: string, data: any) {
-    const build = this.getBuild(id);
+  async getBuild(id: string) { return parse((await query('SELECT data FROM builds WHERE id = ?', [id])).rows[0]); },
+  // ponytail: JSON predicates suit this small catalog; add indexed columns if query latency grows.
+  async getUserBuilds(userId: string) { return (await query("SELECT data FROM builds WHERE json_extract(data, '$.userId') = ?", [userId])).rows.map(parse); },
+  async getPublicBuilds() { return (await query("SELECT data FROM builds WHERE json_extract(data, '$.isPublic') = 1 ORDER BY json_extract(data, '$.likes') DESC LIMIT 50")).rows.map(parse); },
+  async updateBuild(id: string, data: any) {
+    const build = await this.getBuild(id);
     if (!build) return;
     Object.assign(build, data);
-    db.prepare('UPDATE builds SET data = ? WHERE id = ?').run(JSON.stringify(build), id);
+    await query('UPDATE builds SET data = ? WHERE id = ?', [JSON.stringify(build), id]);
     return build;
   },
-  likeBuild(id: string) { const build = this.getBuild(id); return build && this.updateBuild(id, { likes: build.likes + 1 }); },
-  deleteBuild(id: string) { return db.prepare('DELETE FROM builds WHERE id = ?').run(id).changes > 0; },
+  async likeBuild(id: string) {
+    return parse((await query("UPDATE builds SET data = json_set(data, '$.likes', json_extract(data, '$.likes') + 1) WHERE id = ? RETURNING data", [id])).rows[0]);
+  },
+  async deleteBuild(id: string) { return (await query('DELETE FROM builds WHERE id = ?', [id])).rowsAffected > 0; },
 };

@@ -1,9 +1,8 @@
-import { localJWTSecret } from '@/lib/mock-db';
+import { getJWTSecret } from '@/lib/mock-db';
 import { NextRequest, NextResponse } from 'next/server';
 import { mockDB } from '@/lib/mock-db';
 import jwt from 'jsonwebtoken';
 
-const JWT_SECRET = process.env.JWT_SECRET || localJWTSecret;
 
 export async function GET(request: NextRequest) {
   try {
@@ -18,9 +17,9 @@ export async function GET(request: NextRequest) {
     const token = authHeader.substring(7);
 
     try {
-      const decoded = jwt.verify(token, JWT_SECRET) as { userId: string };
+      const decoded = jwt.verify(token, await getJWTSecret()) as { userId: string };
       // Using mockDB
-      const user = mockDB.getUserById(decoded.userId);
+      const user = await mockDB.getUserById(decoded.userId);
 
       if (!user) {
         return NextResponse.json(

@@ -1,10 +1,9 @@
-import { localJWTSecret } from '@/lib/mock-db';
+import { getJWTSecret } from '@/lib/mock-db';
 import { NextRequest, NextResponse } from 'next/server';
 import { mockDB } from '@/lib/mock-db';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 
-const JWT_SECRET = process.env.JWT_SECRET || localJWTSecret;
 
 export async function POST(request: NextRequest) {
   try {
@@ -29,7 +28,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Check if user already exists
-    if (mockDB.getUserByEmail(email)) {
+    if (await mockDB.getUserByEmail(email)) {
       return NextResponse.json(
         { error: 'User with this email already exists' },
         { status: 400 }
@@ -38,12 +37,12 @@ export async function POST(request: NextRequest) {
 
     // Create user
     const passwordHash = await bcrypt.hash(password, 12);
-    const user = mockDB.createUser(username, email, passwordHash);
+    const user = await mockDB.createUser(username, email, passwordHash);
 
     // Generate JWT token
     const token = jwt.sign(
       { userId: user._id, email: user.email },
-      JWT_SECRET,
+      await getJWTSecret(),
       { expiresIn: '30d' }
     );
 

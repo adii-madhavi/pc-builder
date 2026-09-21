@@ -1,19 +1,18 @@
 import { buildInput } from '@/lib/build-input';
-import { localJWTSecret } from '@/lib/mock-db';
+import { getJWTSecret } from '@/lib/mock-db';
 import { NextRequest, NextResponse } from 'next/server';
 import { mockDB } from '@/lib/mock-db';
 import jwt from 'jsonwebtoken';
 
-const JWT_SECRET = process.env.JWT_SECRET || localJWTSecret;
 
-function getUserIdFromToken(authHeader?: string): string | null {
+async function getUserIdFromToken(authHeader?: string): Promise<string | null> {
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
     return null;
   }
 
   const token = authHeader.substring(7);
   try {
-    const decoded = jwt.verify(token, JWT_SECRET) as { userId: string };
+    const decoded = jwt.verify(token, await getJWTSecret()) as { userId: string };
     return decoded.userId;
   } catch {
     return null;
@@ -26,7 +25,7 @@ export async function GET(
 ) {
   try {
     // Using mockDB
-    const build = mockDB.getBuild((await params).id);
+    const build = await mockDB.getBuild((await params).id);
 
     if (!build) {
       return NextResponse.json(
@@ -35,7 +34,7 @@ export async function GET(
       );
     }
 
-    const userId = getUserIdFromToken(request.headers.get('Authorization') || undefined);
+    const userId = await getUserIdFromToken(request.headers.get('Authorization') || undefined);
     if (!build.isPublic && build.userId !== userId) return NextResponse.json({ error: 'Build not found' }, { status: 404 });
     return NextResponse.json({
       success: true,
@@ -55,7 +54,7 @@ export async function PUT(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const userId = getUserIdFromToken(request.headers.get('Authorization') || undefined);
+    const userId = await getUserIdFromToken(request.headers.get('Authorization') || undefined);
 
     if (!userId) {
       return NextResponse.json(
@@ -65,7 +64,7 @@ export async function PUT(
     }
 
     // Using mockDB
-    const build = mockDB.getBuild((await params).id);
+    const build = await mockDB.getBuild((await params).id);
 
     if (!build) {
       return NextResponse.json(
@@ -85,7 +84,7 @@ export async function PUT(
     let data;
     try { data = buildInput({ ...build, ...body }); }
     catch (error) { return NextResponse.json({ error: error instanceof Error ? error.message : 'Invalid build' }, { status: 400 }); }
-    const updatedBuild = mockDB.updateBuild((await params).id, data);
+    const updatedBuild = await mockDB.updateBuild((await params).id, data);
 
     return NextResponse.json({
       success: true,
@@ -105,7 +104,7 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const userId = getUserIdFromToken(request.headers.get('Authorization') || undefined);
+    const userId = await getUserIdFromToken(request.headers.get('Authorization') || undefined);
 
     if (!userId) {
       return NextResponse.json(
@@ -115,7 +114,7 @@ export async function DELETE(
     }
 
     // Using mockDB
-    const build = mockDB.getBuild((await params).id);
+    const build = await mockDB.getBuild((await params).id);
 
     if (!build) {
       return NextResponse.json(
@@ -131,7 +130,7 @@ export async function DELETE(
       );
     }
 
-    mockDB.deleteBuild((await params).id);
+    await mockDB.deleteBuild((await params).id);
 
     return NextResponse.json({
       success: true,

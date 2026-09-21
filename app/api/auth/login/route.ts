@@ -1,10 +1,9 @@
-import { localJWTSecret } from '@/lib/mock-db';
+import { getJWTSecret } from '@/lib/mock-db';
 import { NextRequest, NextResponse } from 'next/server';
 import { mockDB } from '@/lib/mock-db';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 
-const JWT_SECRET = process.env.JWT_SECRET || localJWTSecret;
 
 export async function POST(request: NextRequest) {
   try {
@@ -19,7 +18,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const user = mockDB.getUserByEmail(email);
+    const user = await mockDB.getUserByEmail(email);
 
     if (!user) {
       return NextResponse.json(
@@ -38,7 +37,7 @@ export async function POST(request: NextRequest) {
     // Generate JWT token
     const token = jwt.sign(
       { userId: user._id, email: user.email },
-      JWT_SECRET,
+      await getJWTSecret(),
       { expiresIn: '30d' }
     );
 

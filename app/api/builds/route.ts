@@ -1,19 +1,18 @@
 import { buildInput } from '@/lib/build-input';
-import { localJWTSecret } from '@/lib/mock-db';
+import { getJWTSecret } from '@/lib/mock-db';
 import { NextRequest, NextResponse } from 'next/server';
 import { mockDB } from '@/lib/mock-db';
 import jwt from 'jsonwebtoken';
 
-const JWT_SECRET = process.env.JWT_SECRET || localJWTSecret;
 
-function getUserIdFromToken(authHeader?: string): string | null {
+async function getUserIdFromToken(authHeader?: string): Promise<string | null> {
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
     return null;
   }
 
   const token = authHeader.substring(7);
   try {
-    const decoded = jwt.verify(token, JWT_SECRET) as { userId: string };
+    const decoded = jwt.verify(token, await getJWTSecret()) as { userId: string };
     return decoded.userId;
   } catch {
     return null;
@@ -22,9 +21,9 @@ function getUserIdFromToken(authHeader?: string): string | null {
 
 export async function GET(request: NextRequest) {
   try {
-    const userId = getUserIdFromToken(request.headers.get('Authorization') || undefined);
+    const userId = await getUserIdFromToken(request.headers.get('Authorization') || undefined);
 
-    if (!userId || !mockDB.getUserById(userId)) {
+    if (!userId || !await mockDB.getUserById(userId)) {
       return NextResponse.json(
         { error: 'Unauthorized' },
         { status: 401 }
@@ -32,7 +31,7 @@ export async function GET(request: NextRequest) {
     }
 
     // Using mockDB
-    const builds = mockDB.getUserBuilds(userId);
+    const builds = await mockDB.getUserBuilds(userId);
 
     return NextResponse.json({
       success: true,
@@ -49,9 +48,9 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    const userId = getUserIdFromToken(request.headers.get('Authorization') || undefined);
+    const userId = await getUserIdFromToken(request.headers.get('Authorization') || undefined);
 
-    if (!userId || !mockDB.getUserById(userId)) {
+    if (!userId || !await mockDB.getUserById(userId)) {
       return NextResponse.json(
         { error: 'Unauthorized' },
         { status: 401 }
@@ -61,7 +60,7 @@ export async function POST(request: NextRequest) {
     let data;
     try { data = buildInput(await request.json()); }
     catch (error) { return NextResponse.json({ error: error instanceof Error ? error.message : 'Invalid build' }, { status: 400 }); }
-    const build = mockDB.createBuild(userId, data);
+    const build = await mockDB.createBuild(userId, data);
 
     return NextResponse.json({
       success: true,

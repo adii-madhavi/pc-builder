@@ -1,17 +1,16 @@
-import { localJWTSecret } from '@/lib/mock-db';
+import { getJWTSecret } from '@/lib/mock-db';
 import { NextRequest, NextResponse } from 'next/server';
 import jwt from 'jsonwebtoken';
 
-const JWT_SECRET = process.env.JWT_SECRET || localJWTSecret;
 
-function getUserIdFromToken(authHeader?: string): string | null {
+async function getUserIdFromToken(authHeader?: string): Promise<string | null> {
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
     return null;
   }
 
   const token = authHeader.substring(7);
   try {
-    const decoded = jwt.verify(token, JWT_SECRET) as { userId: string };
+    const decoded = jwt.verify(token, await getJWTSecret()) as { userId: string };
     return decoded.userId;
   } catch {
     return null;
@@ -65,7 +64,7 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    const userId = getUserIdFromToken(request.headers.get('Authorization') || undefined);
+    const userId = await getUserIdFromToken(request.headers.get('Authorization') || undefined);
 
     if (!userId) {
       return NextResponse.json(

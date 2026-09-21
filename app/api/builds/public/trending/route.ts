@@ -4,7 +4,7 @@ import { mockDB } from '@/lib/mock-db';
 export async function GET(request: NextRequest) {
   try {
     // Using mockDB
-    const publicBuilds = mockDB.getPublicBuilds();
+    const publicBuilds = await mockDB.getPublicBuilds();
 
     return NextResponse.json({
       success: true,
